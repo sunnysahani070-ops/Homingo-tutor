@@ -1,9 +1,10 @@
 'use client';
 
 import React from 'react';
-import { TrendingUp, CheckCircle, AlertTriangle, Clock, HelpCircle, Award } from 'lucide-react';
+import { TrendingUp, TrendingDown, CheckCircle, AlertTriangle, Clock, HelpCircle, Award, RotateCcw } from 'lucide-react';
 import { ProofReport } from '@/lib/types';
 import { MathView } from '../math/math-view';
+import Link from 'next/link';
 
 interface MasteryChartProps {
   report: ProofReport;
@@ -22,14 +23,35 @@ export function MasteryChart({ report }: MasteryChartProps) {
   return (
     <div className="space-y-6">
       {/* Hero Headline Card */}
-      <div className="relative overflow-hidden rounded-3xl p-6 sm:p-8 bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-800 text-white shadow-xl shadow-indigo-500/20">
+      <div
+        className={`relative overflow-hidden rounded-3xl p-6 sm:p-8 text-white shadow-xl ${
+          gainPositive
+            ? 'bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-800 shadow-indigo-500/20'
+            : 'bg-gradient-to-br from-slate-700 via-slate-800 to-indigo-900 shadow-slate-500/20'
+        }`}
+      >
         <div className="absolute top-0 right-0 -translate-y-8 translate-x-8 w-48 h-48 bg-white/10 rounded-full blur-2xl pointer-events-none" />
 
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-white/15 backdrop-blur-sm border border-white/20 mb-3">
-              <Award className="w-4 h-4 text-amber-300" />
-              Verified Proof of Learning
+            <div
+              className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider backdrop-blur-sm border mb-3 ${
+                gainPositive
+                  ? 'bg-white/15 border-white/20 text-white'
+                  : 'bg-amber-500/20 border-amber-400/40 text-amber-200'
+              }`}
+            >
+              {gainPositive ? (
+                <>
+                  <Award className="w-4 h-4 text-amber-300" />
+                  <span>Verified Proof of Learning</span>
+                </>
+              ) : (
+                <>
+                  <AlertTriangle className="w-4 h-4 text-amber-300" />
+                  <span>Honest Audit: Revision Required</span>
+                </>
+              )}
             </div>
             <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
               {report.chapter}
@@ -43,7 +65,11 @@ export function MasteryChart({ report }: MasteryChartProps) {
             <span className="text-xs uppercase font-semibold text-indigo-200">Total Learning Gain</span>
             <div className="text-4xl sm:text-5xl font-black tracking-tight text-white flex items-baseline gap-2">
               <span>{gainPositive ? `+${report.learningGain}%` : `${report.learningGain}%`}</span>
-              <TrendingUp className={`w-6 h-6 ${gainPositive ? 'text-emerald-300' : 'text-amber-300'}`} />
+              {gainPositive ? (
+                <TrendingUp className="w-6 h-6 text-emerald-300" />
+              ) : (
+                <TrendingDown className="w-6 h-6 text-amber-300" />
+              )}
             </div>
             <span className="text-xs text-indigo-200 font-medium">
               Baseline {report.baselineScore}% ➔ Retest {report.retestScore}%
@@ -59,7 +85,9 @@ export function MasteryChart({ report }: MasteryChartProps) {
           </div>
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-3">
             <span className="text-[11px] uppercase font-semibold text-indigo-200 block">After Tutoring</span>
-            <span className="text-xl font-extrabold text-emerald-300">{report.retestScore}%</span>
+            <span className={`text-xl font-extrabold ${gainPositive ? 'text-emerald-300' : 'text-amber-300'}`}>
+              {report.retestScore}%
+            </span>
           </div>
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-3">
             <span className="text-[11px] uppercase font-semibold text-indigo-200 block">Hints Used</span>
@@ -77,6 +105,30 @@ export function MasteryChart({ report }: MasteryChartProps) {
           </div>
         </div>
       </div>
+
+      {/* Honest Remedial Card (when learner did not improve) */}
+      {!gainPositive && (
+        <div className="rounded-3xl p-6 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in fade-in">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
+              <h4 className="font-extrabold text-slate-900 dark:text-white text-base">
+                Honest Diagnosis: Further Practice Recommended
+              </h4>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300 max-w-xl leading-relaxed">
+              We prove genuine learning, so we don't pretend a student understood when they're still stuck. Active misconceptions were detected during the retest. Let&apos;s loop back to the Socratic Tutor with an alternative step-by-step approach!
+            </p>
+          </div>
+          <Link
+            href="/tutor?retry=true"
+            className="shrink-0 px-5 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-extrabold text-xs shadow-lg shadow-indigo-500/25 flex items-center gap-2 transition-all"
+          >
+            <RotateCcw className="w-4 h-4" />
+            <span>Loop Back to Tutoring</span>
+          </Link>
+        </div>
+      )}
 
       {/* Concept by Concept Before vs After Bars */}
       <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 shadow-sm border border-slate-200 dark:border-slate-800 space-y-6">

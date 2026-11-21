@@ -87,14 +87,16 @@ export default function RetestPage() {
         const finishData = await finishRes.json();
         if (!finishRes.ok) throw new Error(finishData.error || 'Failed to finalize report');
 
-        // Confetti celebration
-        try {
-          confetti({
-            particleCount: 100,
-            spread: 70,
-            origin: { y: 0.6 },
-          });
-        } catch {}
+        // Trigger confetti celebration only on positive learning gain (honest assessment)
+        if (finishData.learningGain > 0) {
+          try {
+            confetti({
+              particleCount: 100,
+              spread: 70,
+              origin: { y: 0.6 },
+            });
+          } catch {}
+        }
 
         router.push(`/report/${finishData.reportId}?token=${finishData.shareToken}`);
       } else {

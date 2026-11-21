@@ -2,6 +2,27 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServiceSupabase } from '@/lib/db/client';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
+function sanitizePdfText(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/[√]/g, 'sqrt')
+    .replace(/[²]/g, '^2')
+    .replace(/[³]/g, '^3')
+    .replace(/[±]/g, '+/-')
+    .replace(/[≠]/g, '!=')
+    .replace(/[≤]/g, '<=')
+    .replace(/[≥]/g, '>=')
+    .replace(/[×]/g, '*')
+    .replace(/[÷]/g, '/')
+    .replace(/[→➔]/g, '->')
+    .replace(/[—–]/g, '-')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[^\x20-\x7E]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -41,7 +62,7 @@ export async function GET(
     });
 
     // Header Text
-    page.drawText('Homingo Tutor — Proof of Learning', {
+    page.drawText('Homingo Tutor -- Proof of Learning', {
       x: 40,
       y: height - 55,
       size: 22,
@@ -49,7 +70,7 @@ export async function GET(
       color: rgb(1, 1, 1),
     });
 
-    const chapterText = `CBSE Class 10: ${(report.sessions as any)?.chapter || 'Mathematics'}`;
+    const chapterText = sanitizePdfText(`CBSE Class 10: ${(report.sessions as any)?.chapter || 'Mathematics'}`);
     page.drawText(chapterText, {
       x: 40,
       y: height - 85,
@@ -77,13 +98,13 @@ export async function GET(
       color: rgb(0.4, 0.4, 0.5),
     });
 
-    const gainStr = `${report.baseline_score}%  -->  ${report.retest_score}%  (+${report.learning_gain}%)`;
+    const gainStr = `${report.baseline_score}%  -->  ${report.retest_score}%  (${report.learning_gain >= 0 ? '+' : ''}${report.learning_gain}%)`;
     page.drawText(gainStr, {
       x: 60,
       y: height - 215,
       size: 24,
       font: fontBold,
-      color: rgb(0.1, 0.6, 0.3),
+      color: report.learning_gain >= 0 ? rgb(0.1, 0.6, 0.3) : rgb(0.8, 0.3, 0.2),
     });
 
     const metaLine = `Time Spent: ${report.time_spent_minutes}m   |   Hints Used: ${report.hints_used}   |   Verified: ${new Date(report.created_at).toLocaleDateString()}`;
@@ -115,7 +136,8 @@ export async function GET(
       const bScore = Math.round((beforeMap[c] || 0) * 100);
       const aScore = Math.round((afterMap[c] || 0) * 100);
 
-      page.drawText(`- ${c}`, {
+      const safeConceptName = sanitizePdfText(`- ${c}`).substring(0, 45);
+      page.drawText(safeConceptName, {
         x: 50,
         y: currentY,
         size: 11,
@@ -158,7 +180,8 @@ export async function GET(
       currentY -= 20;
     } else {
       for (const mId of resolved.slice(0, 4)) {
-        page.drawText(`[Resolved] ${mId}`, {
+        const safeResolvedText = sanitizePdfText(`[Resolved] ${mId}`).substring(0, 60);
+        page.drawText(safeResolvedText, {
           x: 50,
           y: currentY,
           size: 10,

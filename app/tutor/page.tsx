@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { MathView } from '@/components/math/math-view';
 import { MicButton, AudioSpeakerButton } from '@/components/voice/mic-button';
 import { PhotoUploader } from '@/components/tutor/photo-uploader';
 import { CleanQuestion } from '@/lib/types';
+import Link from 'next/link';
 import {
   Send,
   Sparkles,
@@ -26,8 +27,11 @@ interface ChatMessage {
   hintLevel?: number;
 }
 
-export default function TutorSessionPage() {
+function TutorContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const isRetry = searchParams.get('retry') === 'true';
+
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [language, setLanguage] = useState<'en' | 'hi' | 'hinglish'>('hinglish');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -51,25 +55,65 @@ export default function TutorSessionPage() {
 
     // Initial greeting from Socratic Tutor
     if (messages.length === 0) {
+      let welcomeText = '';
+      if (isRetry) {
+        welcomeText =
+          lang === 'hi'
+            ? 'वापसी पर स्वागत है! रीटेस्ट के कुछ कॉन्सेप्ट्स को और मजबूत करते हैं। आइए इस बार एक नए, आसान तरीके से समझें। आपको कौन सा स्टेप सबसे कठिन लगा?'
+            : lang === 'hinglish'
+            ? 'Welcome back! Retest me kuch concepts abhi clear karne baaki hain. Is baar hum ek alternate, step-by-step visual approach se seekhenge. Aapko kaun sa step sabse confusing laga?'
+            : "Welcome back! The retest shows we still have an opportunity to strengthen a few core concepts. Let's try an alternate, intuitive approach this time. What part felt tricky?";
+      } else {
+        welcomeText =
+          lang === 'hi'
+            ? 'नमस्ते! मैंने आपकी डायग्नोस्टिक परीक्षा का विश्लेषण किया है। आइए मिलकर उन गलतियों को समझें और उन्हें दूर करें। आप कोई भी सवाल पूछ सकते हैं या "Hint" मांग सकते हैं!'
+            : lang === 'hinglish'
+            ? 'Namaste! Maine aapke diagnostic assessment ka analysis kiya hai. Chalo milkar aapke weak concepts ko clear karte hain taaki Board exam me 100% marks aayein! Aap apna solution yahan likh sakte ho, bol sakte ho, ya photo upload kar sakte ho.'
+            : "Hello! I've analyzed your diagnostic assessment. Let's work through the specific concepts where you got stuck. Remember: I will guide you Socratically so you discover the method yourself. Ask any question or request a hint to begin!";
+      }
+
       setMessages([
         {
           id: 'welcome_1',
           role: 'assistant',
-          content:
-            lang === 'hi'
-              ? 'नमस्ते! मैंने आपकी डायग्नोस्टिक परीक्षा का विश्लेषण किया है। आइए मिलकर उन गलतियों को समझें और उन्हें दूर करें। आप कोई भी सवाल पूछ सकते हैं या "Hint" मांग सकते हैं!'
-              : lang === 'hinglish'
-              ? 'Namaste! Maine aapke diagnostic assessment ka analysis kiya hai. Chalo milkar aapke weak concepts ko clear karte hain taaki Board exam me 100% marks aayein! Aap apna solution yahan likh sakte ho, bol sakte ho, ya photo upload kar sakte ho.'
-              : "Hello! I've analyzed your diagnostic assessment. Let's work through the specific concepts where you got stuck. Remember: I will guide you Socratically so you discover the method yourself. Ask any question or request a hint to begin!",
+          content: welcomeText,
           hintLevel: 0,
         },
       ]);
     }
-  }, []);
+  }, [isRetry]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isStreaming]);
+
+  if (!sessionId) {
+    return (
+      <div className="max-w-md mx-auto my-12 p-8 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm text-center space-y-4">
+        <div className="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 flex items-center justify-center text-indigo-600 dark:text-indigo-400 mx-auto">
+          <BookOpen className="w-6 h-6" />
+        </div>
+        <h3 className="text-lg font-bold text-slate-900 dark:text-white">Start Your Learning Session</h3>
+        <p className="text-xs text-slate-500 leading-relaxed">
+          The Socratic Tutor adapts directly to your diagnostic assessment mistakes. Please start with a diagnostic exam or launch a quick demo session.
+        </p>
+        <div className="flex flex-col gap-2 pt-2">
+          <Link
+            href="/onboard"
+            className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md transition-all"
+          >
+            Start Diagnostic Exam
+          </Link>
+          <Link
+            href="/?demo=true"
+            className="w-full py-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs transition-all"
+          >
+            Launch Instant Demo Mode
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   const sendMessage = async (textToSend?: string, isHintRequest: boolean = false) => {
     const content = textToSend || inputText;
@@ -405,5 +449,13 @@ export default function TutorSessionPage() {
         </button>
       </form>
     </div>
+  );
+}
+
+export default function TutorPage() {
+  return (
+    <Suspense fallback={<div className="p-12 text-center text-sm text-slate-500">Loading Tutor Session...</div>}>
+      <TutorContent />
+    </Suspense>
   );
 }
