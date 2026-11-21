@@ -1,0 +1,202 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { getServiceSupabase } from '@/lib/db/client';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const { searchParams } = new URL(req.url);
+    const token = searchParams.get('token');
+
+    const supabase = getServiceSupabase();
+    let query = supabase
+      .from('reports')
+      .select('*, sessions!inner(chapter)')
+      .eq(token ? 'share_token' : 'id', token || id);
+
+    const { data: report, error } = await query.maybeSingle();
+
+    if (error || !report) {
+      return NextResponse.json({ error: 'Report not found' }, { status: 404 });
+    }
+
+    // Generate PDF using pdf-lib
+    const pdfDoc = await PDFDocument.create();
+    const page = pdfDoc.addPage([600, 800]);
+    const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+    const { width, height } = page.getSize();
+
+    // Header Background
+    page.drawRectangle({
+      x: 0,
+      y: height - 120,
+      width,
+      height: 120,
+      color: rgb(0.31, 0.27, 0.9), // Indigo #4f46e5
+    });
+
+    // Header Text
+    page.drawText('Homingo Tutor — Proof of Learning', {
+      x: 40,
+      y: height - 55,
+      size: 22,
+      font: fontBold,
+      color: rgb(1, 1, 1),
+    });
+
+    const chapterText = `CBSE Class 10: ${(report.sessions as any)?.chapter || 'Mathematics'}`;
+    page.drawText(chapterText, {
+      x: 40,
+      y: height - 85,
+      size: 13,
+      font: fontRegular,
+      color: rgb(0.9, 0.9, 1),
+    });
+
+    // Score Summary Card
+    page.drawRectangle({
+      x: 40,
+      y: height - 250,
+      width: width - 80,
+      height: 100,
+      color: rgb(0.96, 0.97, 1),
+      borderColor: rgb(0.8, 0.85, 1),
+      borderWidth: 1,
+    });
+
+    page.drawText('MASTERY GAIN', {
+      x: 60,
+      y: height - 180,
+      size: 10,
+      font: fontBold,
+      color: rgb(0.4, 0.4, 0.5),
+    });
+
+    const gainStr = `${report.baseline_score}%  -->  ${report.retest_score}%  (+${report.learning_gain}%)`;
+    page.drawText(gainStr, {
+      x: 60,
+      y: height - 215,
+      size: 24,
+      font: fontBold,
+      color: rgb(0.1, 0.6, 0.3),
+    });
+
+    const metaLine = `Time Spent: ${report.time_spent_minutes}m   |   Hints Used: ${report.hints_used}   |   Verified: ${new Date(report.created_at).toLocaleDateString()}`;
+    page.drawText(metaLine, {
+      x: 60,
+      y: height - 238,
+      size: 10,
+      font: fontRegular,
+      color: rgb(0.3, 0.3, 0.4),
+    });
+
+    // Concept Breakdown Section
+    let currentY = height - 290;
+    page.drawText('Concept Mastery Progression', {
+      x: 40,
+      y: currentY,
+      size: 14,
+      font: fontBold,
+      color: rgb(0.1, 0.1, 0.2),
+    });
+
+    currentY -= 30;
+    const beforeMap = (report.before_mastery as Record<string, number>) || {};
+    const afterMap = (report.after_mastery as Record<string, number>) || {};
+
+    const concepts = Array.from(new Set([...Object.keys(beforeMap), ...Object.keys(afterMap)]));
+
+    for (const c of concepts) {
+      const bScore = Math.round((beforeMap[c] || 0) * 100);
+      const aScore = Math.round((afterMap[c] || 0) * 100);
+
+      page.drawText(`- ${c}`, {
+        x: 50,
+        y: currentY,
+        size: 11,
+        font: fontBold,
+        color: rgb(0.2, 0.2, 0.3),
+      });
+
+      page.drawText(`Before: ${bScore}%   After: ${aScore}%`, {
+        x: 350,
+        y: currentY,
+        size: 11,
+        font: fontRegular,
+        color: aScore > bScore ? rgb(0.1, 0.6, 0.2) : rgb(0.4, 0.4, 0.4),
+      });
+
+      currentY -= 22;
+      if (currentY < 120) break;
+    }
+
+    // Resolved Misconceptions
+    currentY -= 20;
+    page.drawText('Misconceptions Resolved in Tutoring', {
+      x: 40,
+      y: currentY,
+      size: 14,
+      font: fontBold,
+      color: rgb(0.1, 0.1, 0.2),
+    });
+
+    currentY -= 25;
+    const resolved = (report.misconceptions_resolved as string[]) || [];
+    if (resolved.length === 0) {
+      page.drawText('None detected in baseline or all maintained.', {
+        x: 50,
+        y: currentY,
+        size: 10,
+        font: fontRegular,
+        color: rgb(0.4, 0.4, 0.5),
+      });
+      currentY -= 20;
+    } else {
+      for (const mId of resolved.slice(0, 4)) {
+        page.drawText(`[Resolved] ${mId}`, {
+          x: 50,
+          y: currentY,
+          size: 10,
+          font: fontRegular,
+          color: rgb(0.1, 0.6, 0.3),
+        });
+        currentY -= 20;
+      }
+    }
+
+    // Footer with Share Token
+    page.drawText(`Official Verification Token: ${report.share_token}`, {
+      x: 40,
+      y: 40,
+      size: 8,
+      font: fontRegular,
+      color: rgb(0.6, 0.6, 0.6),
+    });
+
+    page.drawText('Generated by Homingo Tutor - Proving Real Learning Gains', {
+      x: 40,
+      y: 26,
+      size: 8,
+      font: fontRegular,
+      color: rgb(0.6, 0.6, 0.6),
+    });
+
+    const pdfBytes = await pdfDoc.save();
+
+    return new NextResponse(pdfBytes as any, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="proof-of-learning-${report.id.substring(0, 8)}.pdf"`,
+      },
+    });
+  } catch (err: any) {
+    console.error('PDF export error:', err);
+    return NextResponse.json({ error: 'Failed to generate PDF' }, { status: 500 });
+  }
+}

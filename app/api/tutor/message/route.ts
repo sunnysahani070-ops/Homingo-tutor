@@ -1,0 +1,168 @@
+import { NextRequest } from 'next/server';
+import { getServiceSupabase } from '@/lib/db/client';
+import { getTutorChatStream, GEMINI_FLASH_MODEL } from '@/lib/ai/gemini';
+import { SOCRATIC_TUTOR_SYSTEM_PROMPT } from '@/lib/prompts/tutor-socratic';
+import { TutorMessageSchema } from '@/lib/types';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const parsed = TutorMessageSchema.safeParse(body);
+
+    if (!parsed.success) {
+      return new Response(JSON.stringify({ error: 'Invalid parameters', details: parsed.error.format() }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const { sessionId, message, hintRequested, language = 'en' } = parsed.data;
+    const supabase = getServiceSupabase();
+
+    // 1. Fetch session & diagnostic baseline context
+    const { data: session } = await supabase
+      .from('sessions')
+      .select('id, chapter, guest_id')
+      .eq('id', sessionId)
+      .single();
+
+    const { data: snapshot } = await supabase
+      .from('mastery_snapshots')
+      .select('concept_scores, misconceptions_detected, overall_score')
+      .eq('session_id', sessionId)
+      .eq('stage', 'diagnostic')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    // Fetch details of detected misconceptions
+    let misconceptionDetails = '';
+    if (snapshot?.misconceptions_detected && snapshot.misconceptions_detected.length > 0) {
+      const { data: tax } = await supabase
+        .from('misconception_taxonomy')
+        .select('title, description, remediation_hint, concept')
+        .in('id', snapshot.misconceptions_detected);
+
+      misconceptionDetails = (tax || [])
+        .map((t) => `- Concept: ${t.concept}\n  Error: ${t.title}\n  Remediation Strategy: ${t.remediation_hint}`)
+        .join('\n');
+    }
+
+    // 2. Fetch past conversation turns
+    const { data: pastMessages } = await supabase
+      .from('tutor_messages')
+      .select('role, content, hint_level')
+      .eq('session_id', sessionId)
+      .order('created_at', { ascending: true })
+      .limit(12);
+
+    // Determine current hint level
+    let currentHintLevel = 0;
+    const lastAssistantMsg = (pastMessages || []).slice().reverse().find((m) => m.role === 'assistant');
+    if (lastAssistantMsg) {
+      currentHintLevel = lastAssistantMsg.hint_level || 0;
+    }
+    if (hintRequested) {
+      currentHintLevel = Math.min(4, currentHintLevel + 1);
+    }
+
+    // 3. Prepare Gemini Chat Prompt
+    const systemPrompt = `
+${SOCRATIC_TUTOR_SYSTEM_PROMPT}
+
+CURRENT SESSION CONTEXT:
+- CBSE Chapter: "${session?.chapter || 'Class 10 Mathematics'}"
+- Learner Language Preference: "${language}" (en=English, hi=Hindi Devanagari, hinglish=Conversational Roman Hindi)
+- Diagnostic Baseline Score: ${snapshot?.overall_score || 40}%
+- Active Concept Scores: ${JSON.stringify(snapshot?.concept_scores || {})}
+- Detected Learner Misconceptions to address:
+${misconceptionDetails || 'Focus on foundational clarity.'}
+
+CURRENT PEDAGOGICAL STATE:
+- Hint Requested by Learner: ${hintRequested ? 'YES' : 'NO'}
+- Target Hint Ladder Level: ${currentHintLevel} (0=Socratic Question, 1=Conceptual Nudge, 2=Guiding Step, 3=Worked Step, 4=Complete Explanation)
+
+Respond directly to the learner in their preferred language (${language}). Keep math rendered in KaTeX ($...$).
+`;
+
+    const chatHistory = (pastMessages || []).map((msg) => ({
+      role: msg.role === 'assistant' ? ('model' as const) : ('user' as const),
+      parts: [{ text: msg.content }],
+    }));
+
+    const apiKey = process.env.GEMINI_API_KEY || '';
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: GEMINI_FLASH_MODEL,
+      systemInstruction: systemPrompt,
+      generationConfig: { temperature: 0.3 },
+    });
+
+    const chat = model.startChat({ history: chatHistory });
+    const userPromptText = hintRequested
+      ? `[Learner requested Hint Level ${currentHintLevel}]: ${message}`
+      : message;
+
+    const streamResult = await chat.sendMessageStream(userPromptText);
+
+    // Save user message to database
+    await supabase.from('tutor_messages').insert({
+      session_id: sessionId,
+      role: 'user',
+      content: message,
+      hint_level: currentHintLevel,
+      language,
+    });
+
+    // 4. Return SSE ReadableStream
+    let fullAssistantResponse = '';
+    const encoder = new TextEncoder();
+
+    const readableStream = new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const chunk of streamResult.stream) {
+            const text = chunk.text();
+            fullAssistantResponse += text;
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ text, hintLevel: currentHintLevel })}\n\n`)
+            );
+          }
+
+          // Save assistant message to database upon stream completion
+          await supabase.from('tutor_messages').insert({
+            session_id: sessionId,
+            role: 'assistant',
+            content: fullAssistantResponse,
+            hint_level: currentHintLevel,
+            language,
+          });
+
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
+        } catch (err: any) {
+          console.error('SSE Stream error:', err);
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify({ error: err.message || 'Stream error' })}\n\n`)
+          );
+          controller.close();
+        }
+      },
+    });
+
+    return new Response(readableStream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+      },
+    });
+  } catch (err: any) {
+    console.error('Tutor message API error:', err);
+    return new Response(JSON.stringify({ error: err.message || 'Internal server error' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
