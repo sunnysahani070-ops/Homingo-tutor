@@ -225,6 +225,7 @@ export default function DiagnosticPage() {
           {currentQuestion?.options.map((opt) => (
             <button
               key={opt.id}
+              data-option-id={opt.id}
               type="button"
               onClick={() => handleSelectOption(opt.id as any)}
               className={`w-full p-4 rounded-2xl text-left border flex items-center gap-3 transition-all ${
