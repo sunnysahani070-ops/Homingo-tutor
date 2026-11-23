@@ -111,90 +111,99 @@ Respond directly to the learner in their preferred language (${language}). Keep 
 
     // 1. Ultra-fast Groq streaming if GROQ_API_KEY is configured
     if (groqKey) {
-      try {
-        const groqMessages = [
-          { role: 'system', content: systemPrompt },
-          ...(pastMessages || []).map((msg) => ({
-            role: msg.role === 'assistant' ? 'assistant' : 'user',
-            content: msg.content,
-          })),
-          { role: 'user', content: userPromptText },
-        ];
+      const groqCandidateModels = [
+        'openai/gpt-oss-20b',
+        'openai/gpt-oss-120b',
+        'qwen/qwen3.8-27b',
+        'llama-3.3-70b-versatile',
+      ];
 
-        const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${groqKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'llama-3.3-70b-versatile',
-            messages: groqMessages,
-            temperature: 0.3,
-            stream: true,
-          }),
-        });
+      for (const gModel of groqCandidateModels) {
+        try {
+          const groqMessages = [
+            { role: 'system', content: systemPrompt },
+            ...(pastMessages || []).map((msg) => ({
+              role: msg.role === 'assistant' ? 'assistant' : 'user',
+              content: msg.content,
+            })),
+            { role: 'user', content: userPromptText },
+          ];
 
-        if (groqRes.ok && groqRes.body) {
-          const readableStream = new ReadableStream({
-            async start(controller) {
-              const reader = groqRes.body!.getReader();
-              const decoder = new TextDecoder();
-              let buffer = '';
-
-              try {
-                while (true) {
-                  const { done, value } = await reader.read();
-                  if (done) break;
-                  buffer += decoder.decode(value, { stream: true });
-                  const lines = buffer.split('\n');
-                  buffer = lines.pop() || '';
-
-                  for (const line of lines) {
-                    const trimmed = line.trim();
-                    if (!trimmed.startsWith('data: ')) continue;
-                    const jsonStr = trimmed.slice(6);
-                    if (jsonStr === '[DONE]') continue;
-                    try {
-                      const parsed = JSON.parse(jsonStr);
-                      const delta = parsed.choices?.[0]?.delta?.content;
-                      if (delta) {
-                        fullAssistantResponse += delta;
-                        controller.enqueue(
-                          encoder.encode(`data: ${JSON.stringify({ text: delta, hintLevel: currentHintLevel })}\n\n`)
-                        );
-                      }
-                    } catch {}
-                  }
-                }
-
-                await supabase.from('tutor_messages').insert({
-                  session_id: sessionId,
-                  role: 'assistant',
-                  content: fullAssistantResponse,
-                  hint_level: currentHintLevel,
-                  language,
-                });
-
-                controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-                controller.close();
-              } catch (err: any) {
-                console.error('Groq SSE stream error:', err);
-                controller.close();
-              }
-            },
-          });
-
-          return new Response(readableStream, {
+          const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
             headers: {
-              'Content-Type': 'text/event-stream',
-              'Cache-Control': 'no-cache, no-transform',
-              'Connection': 'keep-alive',
+              'Authorization': `Bearer ${groqKey}`,
+              'Content-Type': 'application/json',
             },
+            body: JSON.stringify({
+              model: gModel,
+              messages: groqMessages,
+              temperature: 0.3,
+              stream: true,
+            }),
           });
+
+          if (groqRes.ok && groqRes.body) {
+            const readableStream = new ReadableStream({
+              async start(controller) {
+                const reader = groqRes.body!.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                try {
+                  while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+
+                    for (const line of lines) {
+                      const trimmed = line.trim();
+                      if (!trimmed.startsWith('data: ')) continue;
+                      const jsonStr = trimmed.slice(6);
+                      if (jsonStr === '[DONE]') continue;
+                      try {
+                        const parsed = JSON.parse(jsonStr);
+                        const delta = parsed.choices?.[0]?.delta?.content;
+                        if (delta) {
+                          fullAssistantResponse += delta;
+                          controller.enqueue(
+                            encoder.encode(`data: ${JSON.stringify({ text: delta, hintLevel: currentHintLevel })}\n\n`)
+                          );
+                        }
+                      } catch { }
+                    }
+                  }
+
+                  await supabase.from('tutor_messages').insert({
+                    session_id: sessionId,
+                    role: 'assistant',
+                    content: fullAssistantResponse,
+                    hint_level: currentHintLevel,
+                    language,
+                  });
+
+                  controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+                  controller.close();
+                } catch (err: any) {
+                  console.error('Groq SSE stream error:', err);
+                  controller.close();
+                }
+              },
+            });
+
+            return new Response(readableStream, {
+              headers: {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache, no-transform',
+                'Connection': 'keep-alive',
+              },
+            });
+          }
+        } catch (err) {
+          console.warn(`Groq streaming on ${gModel} failed, trying next candidate:`, err);
         }
-      } catch (err) {
-        console.warn('Groq streaming attempt failed, falling back to Gemini:', err);
       }
     }
 
@@ -225,13 +234,13 @@ Respond directly to the learner in their preferred language (${language}). Keep 
     if (!streamResult) {
       const fallbackText = hintRequested
         ? (language === 'hi'
-            ? `[संकेत ${currentHintLevel}] सूत्र और मुख्य पदों को ध्यान से देखिए। पहले जो दिया गया है उसे अलग करके पहचानें।`
-            : language === 'hinglish'
+          ? `[संकेत ${currentHintLevel}] सूत्र और मुख्य पदों को ध्यान से देखिए। पहले जो दिया गया है उसे अलग करके पहचानें।`
+          : language === 'hinglish'
             ? `[Hint ${currentHintLevel}] Formula aur given terms ko pehle dhyan se dekho. Dekho kaunsa step sabse pehle apply hoga.`
             : `[Hint ${currentHintLevel}] Look closely at the given values and see which step applies first.`)
         : (language === 'hi'
-            ? 'नमस्ते! चलिए इस सवाल को एक-एक कदम करके समझते हैं। आपके हिसाब से पहला कदम क्या होना चाहिए?'
-            : language === 'hinglish'
+          ? 'नमस्ते! चलिए इस सवाल को एक-एक कदम करके समझते हैं। आपके हिसाब से पहला कदम क्या होना चाहिए?'
+          : language === 'hinglish'
             ? 'Chalo isko step-by-step todte hain! Aap mujhe batao, is problem me pehla step aapke hisaab se kya hona chahiye?'
             : "Let's break this down step by step! What do you think the first step should be?");
 

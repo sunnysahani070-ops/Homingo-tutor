@@ -76,46 +76,55 @@ export async function generateStructuredJSON<T>(params: {
   // 1. Ultra-fast Groq acceleration if GROQ_API_KEY is configured (0.3s sub-second responses)
   const groqKey = process.env.GROQ_API_KEY;
   if (groqKey) {
-    try {
-      const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${groqKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages: [
-            { role: 'system', content: params.systemPrompt },
-            {
-              role: 'user',
-              content: `${params.userPrompt}\n\nSTRICT INSTRUCTION: Output ONLY valid JSON matching the schema. No markdown formatting, no comments.`,
-            },
-          ],
-          response_format: { type: 'json_object' },
-          temperature: params.temperature ?? 0.2,
-        }),
-        signal: AbortSignal.timeout(6000),
-      });
+    const groqCandidateModels = [
+      'openai/gpt-oss-20b',
+      'openai/gpt-oss-120b',
+      'qwen/qwen3.8-27b',
+      'llama-3.3-70b-versatile',
+    ];
 
-      if (groqRes.ok) {
-        const groqData = await groqRes.json();
-        const rawContent = groqData.choices?.[0]?.message?.content || '{}';
-        const cleaned = rawContent.replace(/^```json\s*/, '').replace(/```$/, '').trim();
-        const parsed = JSON.parse(cleaned);
-        const validated = params.schema.parse(parsed);
-
-        await logLlmTelemetry({
-          endpoint: params.endpointName,
-          model: 'groq/llama-3.3-70b-versatile',
-          latencyMs: Date.now() - startTime,
-          status: 'SUCCESS',
+    for (const gModel of groqCandidateModels) {
+      try {
+        const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${groqKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: gModel,
+            messages: [
+              { role: 'system', content: params.systemPrompt },
+              {
+                role: 'user',
+                content: `${params.userPrompt}\n\nSTRICT INSTRUCTION: Output ONLY valid JSON matching the schema. No markdown formatting, no comments.`,
+              },
+            ],
+            response_format: { type: 'json_object' },
+            temperature: params.temperature ?? 0.2,
+          }),
+          signal: AbortSignal.timeout(10000),
         });
 
-        return validated;
+        if (groqRes.ok) {
+          const groqData = await groqRes.json();
+          const rawContent = groqData.choices?.[0]?.message?.content || '{}';
+          const cleaned = rawContent.replace(/^```json\s*/, '').replace(/```$/, '').trim();
+          const parsed = JSON.parse(cleaned);
+          const validated = params.schema.parse(parsed);
+
+          await logLlmTelemetry({
+            endpoint: params.endpointName,
+            model: `groq/${gModel}`,
+            latencyMs: Date.now() - startTime,
+            status: 'SUCCESS',
+          });
+
+          return validated;
+        }
+      } catch (groqErr: any) {
+        console.warn(`[${params.endpointName}] Groq attempt on ${gModel} failed (${groqErr.message}), trying next candidate...`);
       }
-    } catch (groqErr: any) {
-      console.warn(`[${params.endpointName}] Groq attempt failed (${groqErr.message}), falling back to Gemini.`);
     }
   }
 
