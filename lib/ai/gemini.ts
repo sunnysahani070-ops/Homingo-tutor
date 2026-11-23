@@ -13,8 +13,6 @@ const genAI = new GoogleGenerativeAI(apiKey);
 export const MODEL_CANDIDATES = [
   'gemini-2.5-flash',
   'gemini-flash-lite-latest',
-  'gemini-3.5-flash',
-  'gemini-3.5-flash-lite',
 ];
 
 export const GEMINI_FLASH_MODEL = 'gemini-2.5-flash';
@@ -73,11 +71,59 @@ export async function generateStructuredJSON<T>(params: {
   preferredModel?: string;
   temperature?: number;
 }): Promise<T> {
+  const startTime = Date.now();
+
+  // 1. Ultra-fast Groq acceleration if GROQ_API_KEY is configured (0.3s sub-second responses)
+  const groqKey = process.env.GROQ_API_KEY;
+  if (groqKey) {
+    try {
+      const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${groqKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: [
+            { role: 'system', content: params.systemPrompt },
+            {
+              role: 'user',
+              content: `${params.userPrompt}\n\nSTRICT INSTRUCTION: Output ONLY valid JSON matching the schema. No markdown formatting, no comments.`,
+            },
+          ],
+          response_format: { type: 'json_object' },
+          temperature: params.temperature ?? 0.2,
+        }),
+        signal: AbortSignal.timeout(6000),
+      });
+
+      if (groqRes.ok) {
+        const groqData = await groqRes.json();
+        const rawContent = groqData.choices?.[0]?.message?.content || '{}';
+        const cleaned = rawContent.replace(/^```json\s*/, '').replace(/```$/, '').trim();
+        const parsed = JSON.parse(cleaned);
+        const validated = params.schema.parse(parsed);
+
+        await logLlmTelemetry({
+          endpoint: params.endpointName,
+          model: 'groq/llama-3.3-70b-versatile',
+          latencyMs: Date.now() - startTime,
+          status: 'SUCCESS',
+        });
+
+        return validated;
+      }
+    } catch (groqErr: any) {
+      console.warn(`[${params.endpointName}] Groq attempt failed (${groqErr.message}), falling back to Gemini.`);
+    }
+  }
+
+  // 2. High-quality Google Gemini candidate chain
   const modelsToTry = params.preferredModel
     ? [params.preferredModel, ...MODEL_CANDIDATES.filter((m) => m !== params.preferredModel)]
     : MODEL_CANDIDATES;
 
-  const startTime = Date.now();
   let lastError: any = null;
 
   for (const modelName of modelsToTry) {
@@ -93,8 +139,8 @@ export async function generateStructuredJSON<T>(params: {
       const prompt = `${params.systemPrompt}\n\nUSER REQUEST:\n${params.userPrompt}\n\nSTRICT INSTRUCTION: Output ONLY valid JSON matching the schema. No markdown formatting, no comments.`;
       const result = await withTimeout(
         model.generateContent(prompt),
-        10000,
-        `Model ${modelName} timed out after 10s`
+        6000,
+        `Model ${modelName} timed out after 6s`
       );
       const text = result.response.text().trim();
 

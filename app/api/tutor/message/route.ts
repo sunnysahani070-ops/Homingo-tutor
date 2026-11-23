@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { getServiceSupabase } from '@/lib/db/client';
-import { getTutorChatStream, GEMINI_FLASH_MODEL } from '@/lib/ai/gemini';
+import { getTutorChatStream, GEMINI_FLASH_MODEL, GEMINI_FALLBACK_MODEL } from '@/lib/ai/gemini';
 import { SOCRATIC_TUTOR_SYSTEM_PROMPT } from '@/lib/prompts/tutor-socratic';
 import { TutorMessageSchema } from '@/lib/types';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -92,19 +92,10 @@ Respond directly to the learner in their preferred language (${language}). Keep 
     }));
 
     const apiKey = process.env.GEMINI_API_KEY || '';
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: GEMINI_FLASH_MODEL,
-      systemInstruction: systemPrompt,
-      generationConfig: { temperature: 0.3 },
-    });
-
-    const chat = model.startChat({ history: chatHistory });
+    const groqKey = process.env.GROQ_API_KEY;
     const userPromptText = hintRequested
       ? `[Learner requested Hint Level ${currentHintLevel}]: ${message}`
       : message;
-
-    const streamResult = await chat.sendMessageStream(userPromptText);
 
     // Save user message to database
     await supabase.from('tutor_messages').insert({
@@ -115,9 +106,166 @@ Respond directly to the learner in their preferred language (${language}). Keep 
       language,
     });
 
-    // 4. Return SSE ReadableStream
     let fullAssistantResponse = '';
     const encoder = new TextEncoder();
+
+    // 1. Ultra-fast Groq streaming if GROQ_API_KEY is configured
+    if (groqKey) {
+      try {
+        const groqMessages = [
+          { role: 'system', content: systemPrompt },
+          ...(pastMessages || []).map((msg) => ({
+            role: msg.role === 'assistant' ? 'assistant' : 'user',
+            content: msg.content,
+          })),
+          { role: 'user', content: userPromptText },
+        ];
+
+        const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${groqKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'llama-3.3-70b-versatile',
+            messages: groqMessages,
+            temperature: 0.3,
+            stream: true,
+          }),
+        });
+
+        if (groqRes.ok && groqRes.body) {
+          const readableStream = new ReadableStream({
+            async start(controller) {
+              const reader = groqRes.body!.getReader();
+              const decoder = new TextDecoder();
+              let buffer = '';
+
+              try {
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  buffer += decoder.decode(value, { stream: true });
+                  const lines = buffer.split('\n');
+                  buffer = lines.pop() || '';
+
+                  for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed.startsWith('data: ')) continue;
+                    const jsonStr = trimmed.slice(6);
+                    if (jsonStr === '[DONE]') continue;
+                    try {
+                      const parsed = JSON.parse(jsonStr);
+                      const delta = parsed.choices?.[0]?.delta?.content;
+                      if (delta) {
+                        fullAssistantResponse += delta;
+                        controller.enqueue(
+                          encoder.encode(`data: ${JSON.stringify({ text: delta, hintLevel: currentHintLevel })}\n\n`)
+                        );
+                      }
+                    } catch {}
+                  }
+                }
+
+                await supabase.from('tutor_messages').insert({
+                  session_id: sessionId,
+                  role: 'assistant',
+                  content: fullAssistantResponse,
+                  hint_level: currentHintLevel,
+                  language,
+                });
+
+                controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+                controller.close();
+              } catch (err: any) {
+                console.error('Groq SSE stream error:', err);
+                controller.close();
+              }
+            },
+          });
+
+          return new Response(readableStream, {
+            headers: {
+              'Content-Type': 'text/event-stream',
+              'Cache-Control': 'no-cache, no-transform',
+              'Connection': 'keep-alive',
+            },
+          });
+        }
+      } catch (err) {
+        console.warn('Groq streaming attempt failed, falling back to Gemini:', err);
+      }
+    }
+
+    // 2. High-quality Gemini Streaming with candidate fallback
+    let streamResult: any = null;
+    const candidates = [GEMINI_FLASH_MODEL, GEMINI_FALLBACK_MODEL];
+
+    if (apiKey) {
+      for (const modelName of candidates) {
+        try {
+          const genAI = new GoogleGenerativeAI(apiKey);
+          const model = genAI.getGenerativeModel({
+            model: modelName,
+            systemInstruction: systemPrompt,
+            generationConfig: { temperature: 0.3 },
+          });
+
+          const chat = model.startChat({ history: chatHistory });
+          streamResult = await chat.sendMessageStream(userPromptText);
+          if (streamResult) break;
+        } catch (geminiErr: any) {
+          console.warn(`Gemini stream attempt failed on ${modelName}:`, geminiErr?.message || geminiErr);
+        }
+      }
+    }
+
+    // 3. Resilient Socratic Fallback Stream if external LLM APIs are rate-limited / unavailable
+    if (!streamResult) {
+      const fallbackText = hintRequested
+        ? (language === 'hi'
+            ? `[संकेत ${currentHintLevel}] सूत्र और मुख्य पदों को ध्यान से देखिए। पहले जो दिया गया है उसे अलग करके पहचानें।`
+            : language === 'hinglish'
+            ? `[Hint ${currentHintLevel}] Formula aur given terms ko pehle dhyan se dekho. Dekho kaunsa step sabse pehle apply hoga.`
+            : `[Hint ${currentHintLevel}] Look closely at the given values and see which step applies first.`)
+        : (language === 'hi'
+            ? 'नमस्ते! चलिए इस सवाल को एक-एक कदम करके समझते हैं। आपके हिसाब से पहला कदम क्या होना चाहिए?'
+            : language === 'hinglish'
+            ? 'Chalo isko step-by-step todte hain! Aap mujhe batao, is problem me pehla step aapke hisaab se kya hona chahiye?'
+            : "Let's break this down step by step! What do you think the first step should be?");
+
+      const readableStream = new ReadableStream({
+        async start(controller) {
+          try {
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ text: fallbackText, hintLevel: currentHintLevel })}\n\n`)
+            );
+
+            await supabase.from('tutor_messages').insert({
+              session_id: sessionId,
+              role: 'assistant',
+              content: fallbackText,
+              hint_level: currentHintLevel,
+              language,
+            });
+
+            controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+            controller.close();
+          } catch (err) {
+            controller.close();
+          }
+        },
+      });
+
+      return new Response(readableStream, {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache, no-transform',
+          'Connection': 'keep-alive',
+        },
+      });
+    }
 
     const readableStream = new ReadableStream({
       async start(controller) {

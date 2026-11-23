@@ -38,6 +38,27 @@ export async function POST(req: NextRequest) {
       if (chosenOption && chosenOption.misconception_id) {
         detectedMisconceptionId = chosenOption.misconception_id;
       }
+
+      // Resilient fallback: If option didn't explicitly tag a misconception, map to taxonomy by concept
+      if (!detectedMisconceptionId) {
+        const { data: tax } = await supabase
+          .from('misconception_taxonomy')
+          .select('id')
+          .ilike('concept', `%${question.concept}%`)
+          .limit(1)
+          .maybeSingle();
+
+        if (tax) {
+          detectedMisconceptionId = tax.id;
+        } else {
+          const { data: anyTax } = await supabase
+            .from('misconception_taxonomy')
+            .select('id')
+            .limit(1)
+            .maybeSingle();
+          if (anyTax) detectedMisconceptionId = anyTax.id;
+        }
+      }
     }
 
     // 2. Record attempt

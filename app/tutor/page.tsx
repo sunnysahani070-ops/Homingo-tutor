@@ -50,6 +50,14 @@ function TutorContent() {
   useEffect(() => {
     const sId = localStorage.getItem('homingo_session_id');
     const lang = (localStorage.getItem('homingo_language') as any) || 'hinglish';
+    const weakConcept = localStorage.getItem('homingo_weak_concept');
+    let misconceptionsList: any[] = [];
+    try {
+      const stored = localStorage.getItem('homingo_misconceptions');
+      if (stored) misconceptionsList = JSON.parse(stored);
+    } catch {}
+
+    const primaryMisconception = misconceptionsList[0]?.title || '';
     setSessionId(sId);
     setLanguage(lang);
 
@@ -59,17 +67,21 @@ function TutorContent() {
       if (isRetry) {
         welcomeText =
           lang === 'hi'
-            ? 'वापसी पर स्वागत है! रीटेस्ट के कुछ कॉन्सेप्ट्स को और मजबूत करते हैं। आइए इस बार एक नए, आसान तरीके से समझें। आपको कौन सा स्टेप सबसे कठिन लगा?'
+            ? `वापसी पर स्वागत है! रीटेस्ट में ${weakConcept ? `"${weakConcept}"` : 'कुछ कॉन्सेप्ट्स'} को और मजबूत करते हैं। आइए एक नए, आसान तरीके से समझें। आपको कौन सा स्टेप सबसे कठिन लगा?`
             : lang === 'hinglish'
-            ? 'Welcome back! Retest me kuch concepts abhi clear karne baaki hain. Is baar hum ek alternate, step-by-step visual approach se seekhenge. Aapko kaun sa step sabse confusing laga?'
-            : "Welcome back! The retest shows we still have an opportunity to strengthen a few core concepts. Let's try an alternate, intuitive approach this time. What part felt tricky?";
+            ? `Welcome back! Retest me ${weakConcept ? `"${weakConcept}"` : 'kuch concepts'} abhi clear karne baaki hain. Is baar hum ek alternate, step-by-step approach se seekhenge. Aapko kaun sa step sabse confusing laga?`
+            : `Welcome back! The retest shows an opportunity to strengthen ${weakConcept ? `"${weakConcept}"` : 'a few concepts'}. Let's try an intuitive approach this time. What part felt tricky?`;
       } else {
+        const mistakeMentionHi = primaryMisconception ? ` (विशेष रूप से: "${primaryMisconception}")` : '';
+        const mistakeMentionHing = primaryMisconception ? ` (jaise: "${primaryMisconception}")` : '';
+        const mistakeMentionEn = primaryMisconception ? ` (specifically: "${primaryMisconception}")` : '';
+
         welcomeText =
           lang === 'hi'
-            ? 'नमस्ते! मैंने आपकी डायग्नोस्टिक परीक्षा का विश्लेषण किया है। आइए मिलकर उन गलतियों को समझें और उन्हें दूर करें। आप कोई भी सवाल पूछ सकते हैं या "Hint" मांग सकते हैं!'
+            ? `नमस्ते! मैंने आपकी डायग्नोस्टिक परीक्षा का विश्लेषण किया है। मैंने देखा कि आपको ${weakConcept ? `"${weakConcept}"` : 'एक कॉन्सेप्ट'}${mistakeMentionHi} में भ्रम हुआ था। चिंता की कोई बात नहीं — आइए मिलकर सबसे पहले इसी गलती को समझते हैं ताकि बोर्ड परीक्षा में पूरे अंक आएँ! आप क्या सोचते हैं, इस सवाल में पहला स्टेप क्या होना चाहिए?`
             : lang === 'hinglish'
-            ? 'Namaste! Maine aapke diagnostic assessment ka analysis kiya hai. Chalo milkar aapke weak concepts ko clear karte hain taaki Board exam me 100% marks aayein! Aap apna solution yahan likh sakte ho, bol sakte ho, ya photo upload kar sakte ho.'
-            : "Hello! I've analyzed your diagnostic assessment. Let's work through the specific concepts where you got stuck. Remember: I will guide you Socratically so you discover the method yourself. Ask any question or request a hint to begin!";
+            ? `Namaste! Maine aapke diagnostic assessment me dekha ki aap ${weakConcept ? `"${weakConcept}"` : 'ek concept'}${mistakeMentionHing} me thoda confuse hue the. Koi baat nahi — chalo milkar pehle isi specific mistake ko clear karte hain taaki Board exam me 100% marks aayein! Aapko isme kaun sa step sabse tricky laga?`
+            : `Hello! Looking at your diagnostic assessment, I noticed you got stuck on ${weakConcept ? `"${weakConcept}"` : 'a key concept'}${mistakeMentionEn}. Don't worry — let's break this down together step-by-step so you discover the method yourself. What part felt confusing?`;
       }
 
       setMessages([

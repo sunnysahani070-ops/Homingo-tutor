@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
       .join('\n');
 
     const prompt = `
-Generate 6 to 8 rigorous diagnostic multiple-choice questions for CBSE Class 10 chapter "${chapter}".
+Generate 4 to 5 focused diagnostic multiple-choice questions for CBSE Class 10 chapter "${chapter}".
 Language: "${language}".
 
 Target these specific misconceptions in your distractors:
@@ -79,6 +79,7 @@ ${taxonomySummary}
 
 Format math in KaTeX ($...$ or $$...$$).
 Each question must have exactly 4 options (A, B, C, D).
+For each incorrect distractor option, assign the exact misconception_id matching the taxonomy.
 Ensure the correct answer is mathematically sound and provide a verification_expression.
 `;
 
@@ -111,13 +112,33 @@ Ensure the correct answer is mathematically sound and provide a verification_exp
 
       const qHash = hashQuestion(q.question_text, q.options);
 
+      // Ensure every distractor option has an exact misconception_id assigned
+      const optionsWithTaxonomy = (q.options || []).map((opt, optIdx) => {
+        if (opt.id === q.correct_answer) {
+          return { id: opt.id, text: opt.text, misconception_id: null };
+        }
+        if (opt.misconception_id) {
+          return opt;
+        }
+        // Match misconception from taxonomy
+        const matchingTax = taxonomy.find((t) =>
+          t.concept.toLowerCase().includes(q.concept.toLowerCase()) ||
+          q.concept.toLowerCase().includes(t.concept.toLowerCase())
+        ) || taxonomy[optIdx % taxonomy.length];
+        return {
+          id: opt.id,
+          text: opt.text,
+          misconception_id: matchingTax ? matchingTax.id : taxonomy[0]?.id || null,
+        };
+      });
+
       questionsToInsert.push({
         session_id: session.id,
         stage: 'diagnostic',
         hash: qHash,
         concept: q.concept,
         question_text: q.question_text,
-        options: q.options,
+        options: optionsWithTaxonomy,
         correct_answer: q.correct_answer,
         solution_steps: q.solution_steps,
         math_verified: isVerified,

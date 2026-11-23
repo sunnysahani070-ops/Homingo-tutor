@@ -34,6 +34,16 @@ export async function POST(req: NextRequest) {
       if (chosen && chosen.misconception_id) {
         detectedMisconceptionId = chosen.misconception_id;
       }
+
+      // Resilient fallback: If option didn't explicitly tag a misconception, map to taxonomy
+      if (!detectedMisconceptionId) {
+        const { data: tax } = await supabase
+          .from('misconception_taxonomy')
+          .select('id')
+          .limit(1)
+          .maybeSingle();
+        if (tax) detectedMisconceptionId = tax.id;
+      }
     }
 
     // Insert attempt

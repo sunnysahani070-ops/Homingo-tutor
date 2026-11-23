@@ -89,6 +89,13 @@ export default function DiagnosticPage() {
         const finishJson = await finishRes.json();
         setFinishData(finishJson);
         setIsFinished(true);
+
+        if (finishJson.weakestConcept) {
+          localStorage.setItem('homingo_weak_concept', finishJson.weakestConcept);
+        }
+        if (finishJson.misconceptionsDetected && finishJson.misconceptionsDetected.length > 0) {
+          localStorage.setItem('homingo_misconceptions', JSON.stringify(finishJson.misconceptionsDetected));
+        }
       } else {
         setCurrentQuestion(data.nextQuestion);
         setSelectedOption(null);
