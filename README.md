@@ -62,7 +62,8 @@ $$\text{DIAGNOSE} \longrightarrow \text{TEACH} \longrightarrow \text{RETEST} \lo
 
 | Variable | Description | Required? | Fallback Behavior |
 | :--- | :--- | :---: | :--- |
-| `GEMINI_API_KEY` | Google AI Studio API key | **Yes** | Multi-model fallback (`gemini-flash-lite-latest` $\rightarrow$ `gemini-3.1-flash-lite` $\rightarrow$ `gemini-3.5-flash` $\rightarrow$ `gemini-3.6-flash`) |
+| `GROQ_API_KEY` | Groq Cloud API key for ultra-fast inference | Optional | Sub-second Llama/GPT generation & streaming; falls back to Gemini |
+| `GEMINI_API_KEY` | Google AI Studio API key | **Yes** | Multi-model fallback (`gemini-2.5-flash` $\rightarrow$ `gemini-flash-lite-latest` $\rightarrow$ verified CBSE offline bank) |
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project endpoint | **Yes** | Project database & auth gateway |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase public anon key | **Yes** | Client-side read access respecting RLS |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase secret admin key | **Yes** | Server-side verified writes & migrations |
