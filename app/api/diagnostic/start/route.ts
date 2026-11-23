@@ -6,6 +6,7 @@ import { GeneratedQuestionSchema, GeneratedQuestion, BatchQuestionsSchema } from
 import { verifyEquation } from '@/lib/ai/math-verifier';
 import { hashQuestion } from '@/lib/ai/question-hasher';
 import { checkRateLimit } from '@/lib/rate-limit/limiter';
+import { getFallbackDiagnosticQuestions } from '@/lib/curriculum/fallback-questions';
 import { z } from 'zod';
 
 const DiagnosticStartInputSchema = z.object({
@@ -81,20 +82,26 @@ Each question must have exactly 4 options (A, B, C, D).
 Ensure the correct answer is mathematically sound and provide a verification_expression.
 `;
 
-    const generated = await generateStructuredJSON({
-      systemPrompt: DIAGNOSTIC_SYSTEM_PROMPT,
-      userPrompt: prompt,
-      schema: BatchQuestionsSchema,
-      endpointName: '/api/diagnostic/start',
-      temperature: 0.2,
-    });
+    let questionsList: GeneratedQuestion[] = [];
+    try {
+      const generated = await generateStructuredJSON({
+        systemPrompt: DIAGNOSTIC_SYSTEM_PROMPT,
+        userPrompt: prompt,
+        schema: BatchQuestionsSchema,
+        endpointName: '/api/diagnostic/start',
+        temperature: 0.2,
+      });
+
+      questionsList = Array.isArray(generated)
+        ? generated
+        : (generated as any).questions || [];
+    } catch (llmErr: any) {
+      console.warn(`[Diagnostic Start] Gemini generation error (${llmErr.message}), falling back to verified CBSE curriculum question bank.`);
+      questionsList = getFallbackDiagnosticQuestions(chapter);
+    }
 
     // 4. Verify questions and store server-side
     const questionsToInsert = [];
-    const questionsList: GeneratedQuestion[] = Array.isArray(generated)
-      ? generated
-      : (generated as any).questions || [];
-
     for (const q of questionsList) {
       let isVerified = true;
       if (q.verification_expression) {

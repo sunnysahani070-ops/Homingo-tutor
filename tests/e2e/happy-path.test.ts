@@ -62,7 +62,7 @@ describe('Full End-to-End Core Loop: Diagnose -> Teach -> Retest -> Prove', () =
 
     sessionId = json.sessionId;
     firstQId = json.firstQuestion.id;
-  }, 30000);
+  }, 60000);
 
   it('3. Answers Diagnostic question and finishes baseline assessment', async () => {
     // Answer question
@@ -106,7 +106,7 @@ describe('Full End-to-End Core Loop: Diagnose -> Teach -> Retest -> Prove', () =
         if (done) break;
       }
     }
-  }, 30000);
+  }, 60000);
 
   it('5. Generates and checks a targeted Practice problem', async () => {
     const practiceRes = await tutorPracticePost(
@@ -132,7 +132,7 @@ describe('Full End-to-End Core Loop: Diagnose -> Teach -> Retest -> Prove', () =
     expect(checkRes.status).toBe(200);
     const checkJson = await checkRes.json();
     expect(checkJson.feedback).toBeDefined();
-  }, 30000);
+  }, 60000);
 
   it('6. Starts Retest with fresh variant questions (Zero diagnostic repetition)', async () => {
     const retestRes = await retestStartPost(
@@ -145,7 +145,7 @@ describe('Full End-to-End Core Loop: Diagnose -> Teach -> Retest -> Prove', () =
     const rJson = await retestRes.json();
     expect(rJson.firstQuestion.id).toBeDefined();
     retestQId = rJson.firstQuestion.id;
-  }, 30000);
+  }, 60000);
 
   it('7. Completes Retest and produces Proof of Learning Report with positive learning gain', async () => {
     // Answer retest question

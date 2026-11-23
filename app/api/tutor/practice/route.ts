@@ -4,6 +4,7 @@ import { generateStructuredJSON } from '@/lib/ai/gemini';
 import { GeneratedQuestionSchema, GeneratedQuestion } from '@/lib/types';
 import { verifyEquation } from '@/lib/ai/math-verifier';
 import { hashQuestion } from '@/lib/ai/question-hasher';
+import { getFallbackDiagnosticQuestions } from '@/lib/curriculum/fallback-questions';
 import { z } from 'zod';
 
 const PracticeInputSchema = z.object({
@@ -42,13 +43,20 @@ Requirements:
 - Render all math in KaTeX ($...$).
 `;
 
-    const generated = await generateStructuredJSON<GeneratedQuestion>({
-      systemPrompt: 'You are an expert CBSE Class 10 mathematics educator generating a practice problem.',
-      userPrompt: prompt,
-      schema: GeneratedQuestionSchema,
-      endpointName: '/api/tutor/practice',
-      temperature: 0.3,
-    });
+    let generated: GeneratedQuestion;
+    try {
+      generated = await generateStructuredJSON<GeneratedQuestion>({
+        systemPrompt: 'You are an expert CBSE Class 10 mathematics educator generating a practice problem.',
+        userPrompt: prompt,
+        schema: GeneratedQuestionSchema,
+        endpointName: '/api/tutor/practice',
+        temperature: 0.3,
+      });
+    } catch (llmErr: any) {
+      console.warn(`[Practice] Gemini generation error (${llmErr.message}), falling back to verified CBSE curriculum practice problem.`);
+      const fallbackList = getFallbackDiagnosticQuestions(session?.chapter || 'Quadratic Equations');
+      generated = fallbackList[0];
+    }
 
     let isVerified = true;
     if (generated.verification_expression) {

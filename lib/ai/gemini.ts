@@ -11,16 +11,15 @@ if (!apiKey) {
 const genAI = new GoogleGenerativeAI(apiKey);
 
 export const MODEL_CANDIDATES = [
+  'gemini-2.5-flash',
   'gemini-flash-lite-latest',
-  'gemini-3.1-flash-lite',
-  'gemini-3.5-flash-lite',
   'gemini-3.5-flash',
-  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
 ];
 
-export const GEMINI_FLASH_MODEL = 'gemini-flash-lite-latest';
-export const GEMINI_FALLBACK_MODEL = 'gemini-3.1-flash-lite';
-export const GEMINI_VISION_MODEL = 'gemini-3.5-flash';
+export const GEMINI_FLASH_MODEL = 'gemini-2.5-flash';
+export const GEMINI_FALLBACK_MODEL = 'gemini-flash-lite-latest';
+export const GEMINI_VISION_MODEL = 'gemini-2.5-flash';
 
 /**
  * Log LLM usage and latency to Supabase for telemetry & debugging
@@ -48,6 +47,19 @@ export async function logLlmTelemetry(params: {
   } catch (err) {
     console.warn('LLM telemetry log warning:', err);
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> {
+  let timer: NodeJS.Timeout;
+  return Promise.race([
+    promise.then((res) => {
+      clearTimeout(timer);
+      return res;
+    }),
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(errorMsg)), ms);
+    }),
+  ]);
 }
 
 /**
@@ -79,7 +91,11 @@ export async function generateStructuredJSON<T>(params: {
       });
 
       const prompt = `${params.systemPrompt}\n\nUSER REQUEST:\n${params.userPrompt}\n\nSTRICT INSTRUCTION: Output ONLY valid JSON matching the schema. No markdown formatting, no comments.`;
-      const result = await model.generateContent(prompt);
+      const result = await withTimeout(
+        model.generateContent(prompt),
+        10000,
+        `Model ${modelName} timed out after 10s`
+      );
       const text = result.response.text().trim();
 
       // Clean potential ```json wrapping

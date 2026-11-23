@@ -5,6 +5,7 @@ import { RETEST_SYSTEM_PROMPT } from '@/lib/prompts/retest';
 import { GeneratedQuestionSchema, GeneratedQuestion, BatchRetestSchema } from '@/lib/types';
 import { verifyEquation } from '@/lib/ai/math-verifier';
 import { hashQuestion, hasDuplicateQuestions } from '@/lib/ai/question-hasher';
+import { getFallbackRetestQuestions } from '@/lib/curriculum/fallback-questions';
 import { z } from 'zod';
 
 const RetestStartSchema = z.object({
@@ -61,18 +62,25 @@ Generate fresh variants with ALTERED NUMBERS AND STRUCTURE. Do NOT repeat previo
 Format math in KaTeX ($...$).
 `;
 
-    const generated = await generateStructuredJSON({
-      systemPrompt: RETEST_SYSTEM_PROMPT,
-      userPrompt: prompt,
-      schema: BatchRetestSchema,
-      endpointName: '/api/retest/start',
-      temperature: 0.3,
-    });
+    let questionsList: GeneratedQuestion[] = [];
+    try {
+      const generated = await generateStructuredJSON({
+        systemPrompt: RETEST_SYSTEM_PROMPT,
+        userPrompt: prompt,
+        schema: BatchRetestSchema,
+        endpointName: '/api/retest/start',
+        temperature: 0.3,
+      });
+
+      questionsList = Array.isArray(generated)
+        ? generated
+        : (generated as any).questions || [];
+    } catch (llmErr: any) {
+      console.warn(`[Retest Start] Gemini generation error (${llmErr.message}), falling back to verified CBSE variant retest bank.`);
+      questionsList = getFallbackRetestQuestions(session?.chapter || 'Quadratic Equations');
+    }
 
     // 3. Verify zero hash collision with diagnostic questions
-    const questionsList: GeneratedQuestion[] = Array.isArray(generated)
-      ? generated
-      : (generated as any).questions || [];
 
     const collision = hasDuplicateQuestions(existingHashes, questionsList);
     if (collision.hasDuplicate) {
